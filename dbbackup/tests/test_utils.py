@@ -1,5 +1,6 @@
 import os
 import pytz
+import tempfile
 from mock import patch
 from datetime import datetime
 
@@ -18,7 +19,7 @@ from dbbackup.tests.utils import (ENCRYPTED_FILE, clean_gpg_keys,
 class Bytes_To_StrTest(TestCase):
     def test_get_gb(self):
         value = utils.bytes_to_str(byteVal=2**31)
-        self.assertEqual(value, "2.0 GB")
+        self.assertEqual(value, "2.0 GiB")
 
     def test_0_decimal(self):
         value = utils.bytes_to_str(byteVal=1.01, decimals=0)
@@ -62,7 +63,7 @@ class Email_Uncaught_ExceptionTest(TestCase):
 
 class Encrypt_FileTest(TestCase):
     def setUp(self):
-        self.path = '/tmp/foo'
+        self.path = tempfile.mktemp()
         with open(self.path, 'a') as fd:
             fd.write('foo')
         add_public_gpg()
@@ -97,7 +98,7 @@ class Unencrypt_FileTest(TestCase):
 
 class Compress_FileTest(TestCase):
     def setUp(self):
-        self.path = '/tmp/foo'
+        self.path = tempfile.mktemp()
         with open(self.path, 'a+b') as fd:
             fd.write(b'foo')
 
@@ -120,7 +121,7 @@ class Uncompress_FileTest(TestCase):
 
 class Create_Spooled_Temporary_FileTest(TestCase):
     def setUp(self):
-        self.path = '/tmp/foo'
+        self.path = tempfile.mktemp()
         with open(self.path, 'a') as fd:
             fd.write('foo')
 

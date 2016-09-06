@@ -1,21 +1,22 @@
 import os
 import subprocess
-import logging
 from django.conf import settings
-from django.utils import six
-from django.utils.six import StringIO
-from dbbackup.storage.base import BaseStorage
+from django.utils import six, timezone
+from django.core.files import File
+from django.core.files.storage import Storage
+from dbbackup.db.base import get_connector
 
-BASE_FILE = os.path.join(settings.BASE_DIR, 'tests/test.txt')
-ENCRYPTED_FILE = os.path.join(settings.BASE_DIR, 'tests/test.txt.gpg')
-COMPRESSED_FILE = os.path.join(settings.BASE_DIR, 'tests/test.txt.gz')
-TARED_FILE = os.path.join(settings.BASE_DIR, 'tests/test.txt.tar')
-ENCRYPTED_COMPRESSED_FILE = os.path.join(settings.BASE_DIR, 'tests/test.txt.gz.gpg')
+BASE_FILE = os.path.join(settings.BLOB_DIR, 'test.txt')
+ENCRYPTED_FILE = os.path.join(settings.BLOB_DIR, 'test.txt.gpg')
+COMPRESSED_FILE = os.path.join(settings.BLOB_DIR, 'test.txt.gz')
+TARED_FILE = os.path.join(settings.BLOB_DIR, 'test.txt.tar')
+ENCRYPTED_COMPRESSED_FILE = os.path.join(settings.BLOB_DIR, 'test.txt.gz.gpg')
 TEST_DATABASE = {'ENGINE': 'django.db.backends.sqlite3', 'NAME': '/tmp/foo.db', 'USER': 'foo', 'PASSWORD': 'bar', 'HOST': 'foo', 'PORT': 122}
 TEST_MONGODB = {'ENGINE': 'django_mongodb_engine', 'NAME': 'mongo_test', 'USER': 'foo', 'PASSWORD': 'bar', 'HOST': 'foo', 'PORT': 122}
+TEST_DATABASE = settings.DATABASES['default']
 
-GPG_PRIVATE_PATH = os.path.join(settings.BASE_DIR, 'tests/gpg/secring.gpg')
-GPG_PUBLIC_PATH = os.path.join(settings.BASE_DIR, 'tests/gpg/pubring.gpg')
+GPG_PRIVATE_PATH = os.path.join(settings.BLOB_DIR, 'gpg/secring.gpg')
+GPG_PUBLIC_PATH = os.path.join(settings.BLOB_DIR, 'gpg/pubring.gpg')
 GPG_FINGERPRINT = '7438 8D4E 02AF C011 4E2F  1E79 F7D1 BBF0 1F63 FDE9'
 DEV_NULL = open(os.devnull, 'w')
 
@@ -36,31 +37,37 @@ class handled_files(dict):
 HANDLED_FILES = handled_files()
 
 
-class FakeStorage(BaseStorage):
+class FakeStorage(Storage):
     name = 'FakeStorage'
-    logger = logging.getLogger('dbbackup.storage')
 
-    def __init__(self, *args, **kwargs):
-        super(FakeStorage, self).__init__(*args, **kwargs)
-        self.deleted_files = []
-        self.written_files = []
+    def exists(self, name):
+        return name in HANDLED_FILES['written_files']
 
-    def delete_file(self, filepath):
-        self.logger.debug("Delete %s", filepath)
-        HANDLED_FILES['deleted_files'].append(filepath)
-        self.deleted_files.append(filepath)
+    def get_available_name(self, name, max_length=None):
+        return name[:max_length]
 
-    def list_directory(self, raw=False):
-        return [f[0] for f in HANDLED_FILES['written_files']]
+    def get_valid_name(self, name):
+        return name
 
-    def write_file(self, filehandle, filename):
-        self.logger.debug("Write %s", filename)
-        HANDLED_FILES['written_files'].append((filename, filehandle))
+    def listdir(self, path):
+        return ([], [f[0] for f in HANDLED_FILES['written_files']])
 
-    def read_file(self, filepath):
-        return [f[1] for f in HANDLED_FILES['written_files'] if f[0] == filepath][0]
+    def accessed_time(self, name):
+        return timezone.now()
+    created_time = modified_time = accessed_time
 
-Storage = FakeStorage
+    def _open(self, name, mode='rb'):
+        file_ = [f[1] for f in HANDLED_FILES['written_files']
+                 if f[0] == name][0]
+        file_.seek(0)
+        return file_
+
+    def _save(self, name, content):
+        HANDLED_FILES['written_files'].append((name, File(content)))
+        return name
+
+    def delete(self, name):
+        HANDLED_FILES['deleted_files'].append(name)
 
 
 def clean_gpg_keys():
@@ -96,3 +103,12 @@ def skip_py3(testcase, reason="Not in Python 3"):
 
 def callable_for_filename_template(datetime, **kwargs):
     return '%s_foo' % datetime
+
+
+def get_dump(database=TEST_DATABASE):
+    return get_connector().create_dump()
+
+
+def get_dump_name(database=None):
+    database = database or TEST_DATABASE
+    return get_connector().generate_filename()

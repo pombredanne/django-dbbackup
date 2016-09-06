@@ -9,7 +9,7 @@ clean:
 	       *.egg
 
 test:
-	python setup.py test
+	python runtests.py
 
 install:
 	python setup.py install
@@ -18,7 +18,8 @@ build:
 	python setup.py build
 
 docs:
-	cd docs && make html
+	cd docs/ && make clean
+	cd docs/ && make html
 
 upload:
 	make clean

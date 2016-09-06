@@ -1,10 +1,10 @@
 """
-Abstract Storage class.
+Utils for handle files.
 """
 import logging
-from importlib import import_module
 from django.core.exceptions import ImproperlyConfigured
-from .. import settings, utils
+from django.core.files.storage import get_storage_class
+from . import settings, utils
 
 
 def get_storage(path=None, options=None):
@@ -23,13 +23,11 @@ def get_storage(path=None, options=None):
     :rtype: :class:`.Storage`
     """
     path = path or settings.STORAGE
-    option = options or {}
     options = options or settings.STORAGE_OPTIONS
     if not path:
         raise ImproperlyConfigured('You must specify a storage class using '
                                    'DBBACKUP_STORAGE settings.')
-    storage_module = import_module(path)
-    return storage_module.Storage(**options)
+    return Storage(path, **options)
 
 
 class StorageError(Exception):
@@ -40,38 +38,55 @@ class FileNotFound(StorageError):
     pass
 
 
-class BaseStorage(object):
-    """Abstract storage class."""
-
+class Storage(object):
+    """
+    This object make high-level storage operations for upload/download or
+    list and filter files. It uses a Django storage object for low-level
+    operations.
+    """
     @property
     def logger(self):
         if not hasattr(self, '_logger'):
             self._logger = logging.getLogger('dbbackup.storage')
         return self._logger
 
-    def __init__(self, server_name=None):
-        if not self.name:
-            raise Exception("Programming Error: storage.name not defined.")
+    def __init__(self, storage_path=None, **options):
+        """
+        Initialize a Django Storage instance with given options.
+
+        :param storage_path: Path to a Django Storage class with dot style
+                             If ``None``, ``settings.DBBACKUP_STORAGE`` will
+                             be used.
+        :type storage_path: str
+        """
+        self._storage_path = storage_path or settings.STORAGE
+        options = options.copy()
+        options.update(settings.STORAGE_OPTIONS)
+        options = dict([(key.lower(), value) for key, value in options.items()])
+        self.storageCls = get_storage_class(self._storage_path)
+        self.storage = self.storageCls(**options)
+        self.name = self.storageCls.__name__
 
     def __str__(self):
-        return self.name
-
-    # TODO: Remove in favor of get_storage
-    @classmethod
-    def storage_factory(cls):
-        return get_storage()
-
-    def backup_dir(self):
-        raise NotImplementedError("Programming Error: backup_dir() not defined.")
+        return 'dbbackup-%s' % self.storage.__str__()
 
     def delete_file(self, filepath):
-        raise NotImplementedError("Programming Error: delete_file() not defined.")
+        self.logger.debug('Deleting file %s', filepath)
+        self.storage.delete(name=filepath)
+
+    def list_directory(self, path=''):
+        return self.storage.listdir(path)[1]
 
     def write_file(self, filehandle, filename):
-        raise NotImplementedError("Programming Error: write_file() not defined.")
+        self.logger.debug('Writing file %s', filename)
+        self.storage.save(name=filename, content=filehandle)
 
     def read_file(self, filepath):
-        raise NotImplementedError("Programming Error: read_file() not defined.")
+        self.logger.debug('Reading file %s', filepath)
+        file_ = self.storage.open(name=filepath, mode='rb')
+        if file_.name is None:
+            file_.name = filepath
+        return file_
 
     def list_backups(self, encrypted=None, compressed=None, content_type=None,
                      database=None):
@@ -107,8 +122,10 @@ class BaseStorage(object):
             files = [f for f in files if ('.gpg' in f) == encrypted]
         if compressed is not None:
             files = [f for f in files if ('.gz' in f) == compressed]
-        if content_type is not None:
-            files = [f for f in files if '%s' % content_type in f]
+        if content_type == 'media':
+            files = [f for f in files if '.tar' in f]
+        elif content_type == 'db':
+            files = [f for f in files if '.tar' not in f]
         if database is not None:
             files = [f for f in files if '%s' % database in f]
         return files
@@ -144,7 +161,7 @@ class BaseStorage(object):
         return max(files, key=utils.filename_to_date)
 
     def get_older_backup(self, encrypted=None, compressed=None,
-                          content_type=None, database=None):
+                         content_type=None, database=None):
         """
         Return the older backup's file name.
 
@@ -174,8 +191,7 @@ class BaseStorage(object):
         return min(files, key=utils.filename_to_date)
 
     def clean_old_backups(self, encrypted=None, compressed=None,
-                          content_type=None, database=None,
-                          keep_number=None):
+                          content_type=None, database=None, keep_number=None):
         """
         Delete olders backups and hold the number defined.
 
@@ -196,6 +212,9 @@ class BaseStorage(object):
         :param keep_number: Number of files to keep, other will be deleted
         :type keep_number: ``int`` or ``None``
         """
+        if keep_number is None:
+            keep_number = settings.CLEANUP_KEEP if content_type == 'db' \
+                else settings.CLEANUP_KEEP_MEDIA
         files = self.list_backups(encrypted=encrypted, compressed=compressed,
                                   content_type=content_type, database=database)
         files = sorted(files, key=utils.filename_to_date, reverse=True)

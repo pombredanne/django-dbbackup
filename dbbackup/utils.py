@@ -1,8 +1,7 @@
 """
 Utility functions for dbbackup.
 """
-from __future__ import (absolute_import, division,
-                        print_function, unicode_literals)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import sys
 import os
@@ -22,7 +21,7 @@ from django.utils import six, timezone
 
 from . import settings
 
-input = raw_input if six.PY2 else input  # @ReservedAssignment
+input = raw_input if six.PY2 else input  # noqa
 
 FAKE_HTTP_REQUEST = HttpRequest()
 FAKE_HTTP_REQUEST.META['SERVER_NAME'] = ''
@@ -31,11 +30,11 @@ FAKE_HTTP_REQUEST.META['HTTP_HOST'] = settings.HOSTNAME
 FAKE_HTTP_REQUEST.path = '/DJANGO-DBBACKUP-EXCEPTION'
 
 BYTES = (
-    ('PB', 1125899906842624.0),
-    ('TB', 1099511627776.0),
-    ('GB', 1073741824.0),
-    ('MB', 1048576.0),
-    ('KB', 1024.0),
+    ('PiB', 1125899906842624.0),
+    ('TiB', 1099511627776.0),
+    ('GiB', 1073741824.0),
+    ('MiB', 1048576.0),
+    ('KiB', 1024.0),
     ('B', 1.0)
 )
 
@@ -116,6 +115,31 @@ def email_uncaught_exception(func):
     return wrapper
 
 
+def create_spooled_temporary_file(filepath=None, fileobj=None):
+    """
+    Create a spooled temporary file. if ``filepath`` or ``fileobj`` is
+    defined its content will be copied into temporary file.
+
+    :param filepath: Path of input file
+    :type filepath: str
+
+    :param fileobj: Input file object
+    :type fileobj: file
+
+    :returns: Spooled temporary file
+    :rtype: :class:`tempfile.SpooledTemporaryFile`
+    """
+    spooled_file = tempfile.SpooledTemporaryFile(
+        max_size=settings.TMP_FILE_MAX_SIZE,
+        dir=settings.TMP_DIR)
+    if filepath:
+        fileobj = open(filepath, 'r+b')
+    if fileobj is not None:
+        fileobj.seek(0)
+        copyfileobj(fileobj, spooled_file, settings.TMP_FILE_READ_SIZE)
+    return spooled_file
+
+
 def encrypt_file(inputfile, filename):
     """
     Encrypt input file using GPG and remove .gpg extension to its name.
@@ -187,13 +211,7 @@ def unencrypt_file(inputfile, filename, passphrase=None):
                                     output=temp_filename)
             if not result:
                 raise DecryptionError('Decryption failed; status: %s' % result.status)
-            outputfile = tempfile.SpooledTemporaryFile(
-                max_size=settings.TMP_FILE_MAX_SIZE, dir=settings.TMP_DIR)
-            f = open(temp_filename, 'r+b')
-            try:
-                outputfile.write(f.read())
-            finally:
-                f.close()
+            outputfile = create_spooled_temporary_file(temp_filename)
         finally:
             if os.path.exists(temp_filename):
                 os.remove(temp_filename)
@@ -215,11 +233,9 @@ def compress_file(inputfile, filename):
     :returns: Tuple with compressed file and new file's name
     :rtype: :class:`tempfile.SpooledTemporaryFile`, ``str``
     """
-    outputfile = tempfile.SpooledTemporaryFile(
-        max_size=settings.TMP_FILE_MAX_SIZE, dir=settings.TMP_DIR)
+    outputfile = create_spooled_temporary_file()
     new_filename = filename + '.gz'
     zipfile = gzip.GzipFile(filename=filename, fileobj=outputfile, mode="wb")
-    # TODO: Why do we have an exception block without handling exceptions?
     try:
         inputfile.seek(0)
         copyfileobj(inputfile, zipfile, settings.TMP_FILE_READ_SIZE)
@@ -241,41 +257,13 @@ def uncompress_file(inputfile, filename):
     :returns: Tuple with file and new file's name
     :rtype: :class:`tempfile.SpooledTemporaryFile`, ``str``
     """
-    outputfile = tempfile.SpooledTemporaryFile(
-        max_size=settings.TMP_FILE_MAX_SIZE, dir=settings.TMP_DIR)
     zipfile = gzip.GzipFile(fileobj=inputfile, mode="rb")
     try:
-        inputfile.seek(0)
-        outputfile.write(zipfile.read())
+        outputfile = create_spooled_temporary_file(fileobj=zipfile)
     finally:
         zipfile.close()
     new_basename = os.path.basename(filename).replace('.gz', '')
     return outputfile, new_basename
-
-
-def create_spooled_temporary_file(filepath):
-    """
-    Create a spooled temporary file.
-
-    :param filepath: Path of input file
-    :type filepath: str
-
-    :returns: file of the spooled temporary file
-    :rtype: :class:`tempfile.SpooledTemporaryFile`
-    """
-    spooled_file = tempfile.SpooledTemporaryFile(
-        max_size=settings.TMP_FILE_MAX_SIZE,
-        dir=settings.TMP_DIR)
-    tmpfile = open(filepath, 'r+b')
-    try:
-        while True:
-            data = tmpfile.read(1024 * 1000)
-            if not data:
-                break
-            spooled_file.write(data)
-    finally:
-        tmpfile.close()
-    return spooled_file
 
 
 def timestamp(value):
@@ -352,7 +340,7 @@ def filename_to_datestring(filename, datefmt=None):
     :returns: Date part or nothing if not found
     :rtype: ``str`` or ``NoneType``
     """
-    datefmt = datefmt or settings.DATE_FORMAT 
+    datefmt = datefmt or settings.DATE_FORMAT
     regex = datefmt_to_regex(datefmt)
     search = regex.search(filename)
     if search:
@@ -370,14 +358,13 @@ def filename_to_date(filename, datefmt=None):
     :returns: Date guessed or nothing if no date found
     :rtype: ``datetime.datetime`` or ``NoneType``
     """
-    datefmt = datefmt or settings.DATE_FORMAT 
+    datefmt = datefmt or settings.DATE_FORMAT
     datestring = filename_to_datestring(filename, datefmt)
     if datestring is not None:
         return datetime.strptime(datestring, datefmt)
 
 
-def filename_generate(extension, database_name='', servername=None,
-                      content_type='db'):
+def filename_generate(extension, database_name='', servername=None, content_type='db', wildcard=None):
     """
     Create a new backup filename.
 
@@ -387,23 +374,26 @@ def filename_generate(extension, database_name='', servername=None,
     :param database_name: If it is database backup specify its name
     :type database_name: ``str``
 
-    :param servername: Specify server name or by default ``settings.HOSTNAME``
+    :param servername: Specify server name or by default ``settings.DBBACKUP_HOSTNAME``
     :type servername: ``str``
 
     :param content_type: Content type to backup, ``'media'`` or ``'db'``
+    :type content_type: ``str``
+
+    :param wildcard: Replace datetime with this wilecard regex
     :type content_type: ``str``
 
     :returns: Computed file name
     :rtype: ``str`
     """
     if content_type == 'db':
-        name_format = settings.FILENAME_TEMPLATE
-        database_name = database_name.replace("/", "_")
-    else:
-         name_format = settings.MEDIA_FILENAME_TEMPLATE
+        if '/' in database_name:
+            database_name = os.path.basename(database_name)
+        if '.' in database_name:
+            database_name = database_name.split('.')[0]
     params = {
         'servername': servername or settings.HOSTNAME,
-        'datetime': timezone.now().strftime(settings.DATE_FORMAT),
+        'datetime': wildcard or timezone.now().strftime(settings.DATE_FORMAT),
         'databasename': database_name,
         'extension': extension,
         'content_type': content_type

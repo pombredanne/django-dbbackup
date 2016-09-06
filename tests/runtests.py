@@ -29,6 +29,10 @@ DBBACKUP_STORAGE = os.environ.get('STORAGE', 'dbbackup.tests.utils')
 DBBACKUP_STORAGE_OPTIONS = dict([keyvalue.split('=') for keyvalue in
                                  os.environ.get('STORAGE_OPTIONS', '').split(',')
                                  if keyvalue])
+DATABASE.update({
+    'TEST': {'NAME': DATABASE['NAME']},
+    'TEST_NAME': DATABASE['NAME']
+})
 
 settings.configure(
     ADMIN=('foo@bar'),

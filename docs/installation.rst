@@ -27,27 +27,36 @@ that are at least present when using PyPi repositories.
     pip install -e git+https://github.com/mjs7231/django-dbbackup.git#egg=django-dbbackup
 
 
-Adding in your project
+Add it in your project
 ----------------------
 
-In your ``settings.INSTALLED_APPS``, make sure you have the following:
-
-::
+In your ``settings.py``, make sure you have the following things: ::
 
     INSTALLED_APPS = (
         ...
         'dbbackup',  # django-dbbackup
     )
 
+    DBBACKUP_STORAGE = 'dbbackup.storage.filesystem_storage'
+    DBBACKUP_STORAGE_OPTIONS = {'location': '/var/backups'}
+
+Create the backup directory: ::
+
+    mkdir /var/backups
+
+.. note::
+
+    This configuration uses filesystem storage, but you can use any storage
+    supported by Django API. See `storage` for more information about it.
+
+
 Testing that everything worked
 ------------------------------
 
-Now, you should be able to create your first backup by running:
-
-::
+Now, you should be able to create your first backup by running: ::
 
     $ python manage.py dbbackup
 
 If your database was called ``default`` which is the normal Django behaviour
-of a single-database project, you should now see a new file ``default.backup``.
-
+of a single-database project, you should now see a new file in your backup
+directory.

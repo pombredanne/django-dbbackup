@@ -5,7 +5,6 @@ mock
 coverage<4
 python-gnupg
 django-storages-redux
-boto
-moto
 pytz
 dj-database-url
+testfixtures
